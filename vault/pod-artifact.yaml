@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-secure-app
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/agent-init-first: "true"
+    vault.hashicorp.com/role: "myapp-role"
+    vault.hashicorp.com/agent-inject-secret-api-config: "remote-server/data/myapp"
+    vault.hashicorp.com/agent-inject-template-api-config: |
+      {{- with secret "remote-server/data/myapp" -}}
+      {{ .Data.data.api_url }}
+      {{- end -}}
+spec:
+  volumes:
+  - name: secrets-share
+    emptyDir: {}
+
+  initContainers:
+  - name: fetch-external-data
+    image: curlimages/curl:latest
+    command: ["sh", "-c"]
+    args:
+      - |
+        echo "Starting init process..."
+        if [ -f /vault/secrets/api-config ]; then
+            TARGET_URL=$(cat /vault/secrets/api-config | tr -d '\n\r ')
+            echo "Target URL: |$TARGET_URL|"
+            echo "Downloading secrets from external server..."
+            curl -s -L "$TARGET_URL" > /data-share/external-secrets.json
+            echo "Done."
+        else
+            echo "Error: Vault config not found!"
+            exit 1
+        fi
+    volumeMounts:
+    - name: secrets-share
+      mountPath: /data-share
+
+  containers:
+  - name: main-app
+    image: alpine
+    command: ["sh", "-c", "echo 'App started'; cat /app/secrets/external-secrets.json; sleep 10000"]
+    volumeMounts:
+    - name: secrets-share
+      mountPath: /app/secrets
